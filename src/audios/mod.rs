@@ -1,3 +1,7 @@
+mod wav;
+
+pub use wav::*;
+
 use std::io::Result as IOResult;
 
 pub trait Audio {
