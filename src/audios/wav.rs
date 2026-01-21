@@ -1,6 +1,6 @@
 use std::{
     fs::File,
-    io::{Cursor, Read, Write},
+    io::{self, Cursor, Read, Write},
 };
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
@@ -82,43 +82,43 @@ impl FileHeader {
         }
     }
 
-    pub fn to_bytes(&self) -> Vec<u8> {
+    pub fn to_bytes(&self) -> io::Result<Vec<u8>> {
         let mut bytes = Vec::with_capacity(44);
 
-        let _ = bytes.write_u8(self.type_bloc_id[0] as u8);
-        let _ = bytes.write_u8(self.type_bloc_id[1] as u8);
-        let _ = bytes.write_u8(self.type_bloc_id[2] as u8);
-        let _ = bytes.write_u8(self.type_bloc_id[3] as u8);
+        bytes.write_u8(self.type_bloc_id[0] as u8)?;
+        bytes.write_u8(self.type_bloc_id[1] as u8)?;
+        bytes.write_u8(self.type_bloc_id[2] as u8)?;
+        bytes.write_u8(self.type_bloc_id[3] as u8)?;
 
-        let _ = bytes.write_u32::<LittleEndian>(self.file_size);
+        bytes.write_u32::<LittleEndian>(self.file_size)?;
 
-        let _ = bytes.write_u8(self.format_id[0] as u8);
-        let _ = bytes.write_u8(self.format_id[1] as u8);
-        let _ = bytes.write_u8(self.format_id[2] as u8);
-        let _ = bytes.write_u8(self.format_id[3] as u8);
-
-        //
-        let _ = bytes.write_u8(self.format_bloc_id[0] as u8);
-        let _ = bytes.write_u8(self.format_bloc_id[1] as u8);
-        let _ = bytes.write_u8(self.format_bloc_id[2] as u8);
-        let _ = bytes.write_u8(self.format_bloc_id[3] as u8);
-
-        let _ = bytes.write_u32::<LittleEndian>(self.bloc_size);
-        let _ = bytes.write_u16::<LittleEndian>(self.audio_format);
-        let _ = bytes.write_u16::<LittleEndian>(self.nbr_channels);
-        let _ = bytes.write_u32::<LittleEndian>(self.frequency);
-        let _ = bytes.write_u32::<LittleEndian>(self.byte_per_sec);
-        let _ = bytes.write_u16::<LittleEndian>(self.byte_per_bloc);
-        let _ = bytes.write_u16::<LittleEndian>(self.bits_per_sample);
+        bytes.write_u8(self.format_id[0] as u8)?;
+        bytes.write_u8(self.format_id[1] as u8)?;
+        bytes.write_u8(self.format_id[2] as u8)?;
+        bytes.write_u8(self.format_id[3] as u8)?;
 
         //
-        let _ = bytes.write_u8(self.data_bloc_id[0] as u8);
-        let _ = bytes.write_u8(self.data_bloc_id[1] as u8);
-        let _ = bytes.write_u8(self.data_bloc_id[2] as u8);
-        let _ = bytes.write_u8(self.data_bloc_id[3] as u8);
-        let _ = bytes.write_u32::<LittleEndian>(self.data_size);
+        bytes.write_u8(self.format_bloc_id[0] as u8)?;
+        bytes.write_u8(self.format_bloc_id[1] as u8)?;
+        bytes.write_u8(self.format_bloc_id[2] as u8)?;
+        bytes.write_u8(self.format_bloc_id[3] as u8)?;
 
-        bytes
+        bytes.write_u32::<LittleEndian>(self.bloc_size)?;
+        bytes.write_u16::<LittleEndian>(self.audio_format)?;
+        bytes.write_u16::<LittleEndian>(self.nbr_channels)?;
+        bytes.write_u32::<LittleEndian>(self.frequency)?;
+        bytes.write_u32::<LittleEndian>(self.byte_per_sec)?;
+        bytes.write_u16::<LittleEndian>(self.byte_per_bloc)?;
+        bytes.write_u16::<LittleEndian>(self.bits_per_sample)?;
+
+        //
+        bytes.write_u8(self.data_bloc_id[0] as u8)?;
+        bytes.write_u8(self.data_bloc_id[1] as u8)?;
+        bytes.write_u8(self.data_bloc_id[2] as u8)?;
+        bytes.write_u8(self.data_bloc_id[3] as u8)?;
+        bytes.write_u32::<LittleEndian>(self.data_size)?;
+
+        Ok(bytes)
     }
 }
 
@@ -134,8 +134,8 @@ impl Payload {
         }
     }
 
-    pub fn to_bytes(&self) -> Vec<u8> {
-        self.data.clone()
+    pub fn to_bytes(&self) -> io::Result<Vec<u8>> {
+        Ok(self.data.clone())
     }
 }
 
@@ -159,8 +159,8 @@ impl Audio for Wav {
     fn save(&mut self, path: impl Into<String>, overwrite: bool) -> std::io::Result<()> {
         let mut all_bytes = Vec::new();
 
-        all_bytes.append(&mut self.header.to_bytes());
-        all_bytes.append(&mut self.payload.to_bytes());
+        all_bytes.append(&mut self.header.to_bytes()?);
+        all_bytes.append(&mut self.payload.to_bytes()?);
 
         if overwrite {
             let mut file = File::create(path.into())?;
@@ -174,15 +174,15 @@ impl Audio for Wav {
     }
 
     fn sample_rate(&self) -> u32 {
-        todo!()
+        self.header.frequency
     }
 
-    fn channels(&self) -> u8 {
-        todo!()
+    fn channels(&self) -> u16 {
+        self.header.nbr_channels
     }
 
-    fn bit_depth(&self) -> u8 {
-        todo!()
+    fn bit_depth(&self) -> u16 {
+        self.header.bits_per_sample
     }
 }
 
@@ -194,6 +194,15 @@ mod tests {
     #[test]
     pub fn test_duplicate_file() {
         let mut audio = Wav::open("./audios/suzume_no_tojimari.wav").unwrap();
-        audio.save("./audios/duplicate.wav", false).unwrap();
+        audio.save("./audios/duplicate.wav", true).unwrap();
+
+        assert_eq!(audio.bit_depth(), 16);
+        assert_eq!(audio.channels(), 2);
+        assert_eq!(audio.sample_rate(), 44100);
+
+        let audio2 = Wav::open("./audios/duplicate.wav").unwrap();
+        assert_eq!(audio2.bit_depth(), 16);
+        assert_eq!(audio2.channels(), 2);
+        assert_eq!(audio2.sample_rate(), 44100);
     }
 }

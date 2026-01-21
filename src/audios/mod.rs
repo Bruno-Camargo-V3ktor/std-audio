@@ -13,7 +13,7 @@ pub trait Audio {
 
     fn sample_rate(&self) -> u32;
 
-    fn bit_depth(&self) -> u8;
+    fn bit_depth(&self) -> u16;
 
-    fn channels(&self) -> u8;
+    fn channels(&self) -> u16;
 }
