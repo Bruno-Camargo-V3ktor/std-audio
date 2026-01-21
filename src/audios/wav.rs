@@ -5,6 +5,8 @@ use std::{
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 
+use crate::SampleBits;
+
 use super::Audio;
 
 #[derive(Clone, Debug)]
@@ -17,12 +19,12 @@ pub struct Wav {
 /// 44 bytes in memory || RIFF WAVE ESPECIFICATION
 struct FileHeader {
     //Master RIFF chunk
-    type_bloc_id: [char; 4],
+    type_bloc_id: [u8; 4],
     file_size: u32,
-    format_id: [char; 4],
+    format_id: [u8; 4],
 
     //Chunk describing the data format
-    format_bloc_id: [char; 4],
+    format_bloc_id: [u8; 4],
     bloc_size: u32,
     audio_format: u16,
     nbr_channels: u16,
@@ -32,7 +34,7 @@ struct FileHeader {
     bits_per_sample: u16,
 
     //Chunk containing the sampled data
-    data_bloc_id: [char; 4],
+    data_bloc_id: [u8; 4],
     data_size: u32,
 }
 
@@ -43,25 +45,25 @@ impl FileHeader {
         Self {
             //
             type_bloc_id: [
-                cursor.read_u8().unwrap() as char,
-                cursor.read_u8().unwrap() as char,
-                cursor.read_u8().unwrap() as char,
-                cursor.read_u8().unwrap() as char,
+                cursor.read_u8().unwrap(),
+                cursor.read_u8().unwrap(),
+                cursor.read_u8().unwrap(),
+                cursor.read_u8().unwrap(),
             ],
             file_size: cursor.read_u32::<LittleEndian>().unwrap(),
             format_id: [
-                cursor.read_u8().unwrap() as char,
-                cursor.read_u8().unwrap() as char,
-                cursor.read_u8().unwrap() as char,
-                cursor.read_u8().unwrap() as char,
+                cursor.read_u8().unwrap(),
+                cursor.read_u8().unwrap(),
+                cursor.read_u8().unwrap(),
+                cursor.read_u8().unwrap(),
             ],
 
             //
             format_bloc_id: [
-                cursor.read_u8().unwrap() as char,
-                cursor.read_u8().unwrap() as char,
-                cursor.read_u8().unwrap() as char,
-                cursor.read_u8().unwrap() as char,
+                cursor.read_u8().unwrap(),
+                cursor.read_u8().unwrap(),
+                cursor.read_u8().unwrap(),
+                cursor.read_u8().unwrap(),
             ],
             bloc_size: cursor.read_u32::<LittleEndian>().unwrap(),
             audio_format: cursor.read_u16::<LittleEndian>().unwrap(),
@@ -73,10 +75,10 @@ impl FileHeader {
 
             //
             data_bloc_id: [
-                cursor.read_u8().unwrap() as char,
-                cursor.read_u8().unwrap() as char,
-                cursor.read_u8().unwrap() as char,
-                cursor.read_u8().unwrap() as char,
+                cursor.read_u8().unwrap(),
+                cursor.read_u8().unwrap(),
+                cursor.read_u8().unwrap(),
+                cursor.read_u8().unwrap(),
             ],
             data_size: cursor.read_u32::<LittleEndian>().unwrap(),
         }
@@ -85,24 +87,12 @@ impl FileHeader {
     pub fn to_bytes(&self) -> io::Result<Vec<u8>> {
         let mut bytes = Vec::with_capacity(44);
 
-        bytes.write_u8(self.type_bloc_id[0] as u8)?;
-        bytes.write_u8(self.type_bloc_id[1] as u8)?;
-        bytes.write_u8(self.type_bloc_id[2] as u8)?;
-        bytes.write_u8(self.type_bloc_id[3] as u8)?;
-
+        bytes.write_all(&self.type_bloc_id)?;
         bytes.write_u32::<LittleEndian>(self.file_size)?;
-
-        bytes.write_u8(self.format_id[0] as u8)?;
-        bytes.write_u8(self.format_id[1] as u8)?;
-        bytes.write_u8(self.format_id[2] as u8)?;
-        bytes.write_u8(self.format_id[3] as u8)?;
+        bytes.write_all(&self.format_id)?;
 
         //
-        bytes.write_u8(self.format_bloc_id[0] as u8)?;
-        bytes.write_u8(self.format_bloc_id[1] as u8)?;
-        bytes.write_u8(self.format_bloc_id[2] as u8)?;
-        bytes.write_u8(self.format_bloc_id[3] as u8)?;
-
+        bytes.write_all(&self.format_bloc_id)?;
         bytes.write_u32::<LittleEndian>(self.bloc_size)?;
         bytes.write_u16::<LittleEndian>(self.audio_format)?;
         bytes.write_u16::<LittleEndian>(self.nbr_channels)?;
@@ -112,10 +102,7 @@ impl FileHeader {
         bytes.write_u16::<LittleEndian>(self.bits_per_sample)?;
 
         //
-        bytes.write_u8(self.data_bloc_id[0] as u8)?;
-        bytes.write_u8(self.data_bloc_id[1] as u8)?;
-        bytes.write_u8(self.data_bloc_id[2] as u8)?;
-        bytes.write_u8(self.data_bloc_id[3] as u8)?;
+        bytes.write_all(&self.data_bloc_id)?;
         bytes.write_u32::<LittleEndian>(self.data_size)?;
 
         Ok(bytes)
@@ -124,18 +111,59 @@ impl FileHeader {
 
 #[derive(Clone, Debug)]
 struct Payload {
-    data: Vec<u8>,
+    samples: SampleBits,
+    total_bytes: usize,
 }
 
 impl Payload {
-    pub fn from_bytes(bytes: &[u8]) -> Self {
+    pub fn from_bytes(bits_per_sample: u16, bytes: &[u8]) -> Self {
+        let samples = match bits_per_sample {
+            16 => {
+                let mut samples = Vec::with_capacity(bytes.len());
+                bytes.chunks(2).for_each(|v| {
+                    let mut cursor = Cursor::new(v);
+                    samples.push(cursor.read_i16::<LittleEndian>().unwrap());
+                });
+
+                SampleBits::I16bits(samples)
+            }
+
+            32 => {
+                let mut samples = Vec::with_capacity(bytes.len());
+                bytes.chunks(4).for_each(|v| {
+                    let mut cursor = Cursor::new(v);
+                    samples.push(cursor.read_i32::<LittleEndian>().unwrap());
+                });
+
+                SampleBits::I32bits(samples)
+            }
+            _ => panic!(),
+        };
+
         Self {
-            data: bytes.to_vec(),
+            samples,
+            total_bytes: bytes.len(),
         }
     }
 
     pub fn to_bytes(&self) -> io::Result<Vec<u8>> {
-        Ok(self.data.clone())
+        let mut bytes: Vec<u8> = Vec::with_capacity(self.total_bytes);
+
+        match &self.samples {
+            SampleBits::I16bits(samples) => {
+                for sample in samples {
+                    bytes.write_i16::<LittleEndian>(*sample)?;
+                }
+            }
+
+            SampleBits::I32bits(samples) => {
+                for sample in samples {
+                    bytes.write_i32::<LittleEndian>(*sample)?;
+                }
+            }
+        }
+
+        Ok(bytes)
     }
 }
 
@@ -151,25 +179,33 @@ impl Audio for Wav {
         let _size = file.read_to_end(&mut bytes)?;
 
         let header = FileHeader::from_bytes(&bytes[0..44]);
-        let payload = Payload::from_bytes(&bytes[44..]);
+        let payload = Payload::from_bytes(header.bits_per_sample, &bytes[44..]);
 
         Ok(Self { header, payload })
     }
 
     fn save(&mut self, path: impl Into<String>, overwrite: bool) -> std::io::Result<()> {
-        let mut all_bytes = Vec::new();
+        let mut file = if overwrite {
+            File::create(path.into())?
+        } else {
+            File::create_new(path.into())?
+        };
 
-        all_bytes.append(&mut self.header.to_bytes()?);
-        all_bytes.append(&mut self.payload.to_bytes()?);
+        println!("{}", self.header.data_size);
+        println!("{}", self.header.file_size);
 
-        if overwrite {
-            let mut file = File::create(path.into())?;
-            file.write(&all_bytes)?;
-            return Ok(());
-        }
+        let payload_bytes = self.payload.to_bytes()?;
+        self.header.data_size = 26;
+        self.header.file_size = 36 + payload_bytes.len() as u32;
 
-        let mut file = File::create_new(path.into())?;
-        file.write(&all_bytes)?;
+        println!("{}", payload_bytes.len());
+        println!("{}", self.header.data_size);
+        println!("{}", self.header.file_size);
+
+        file.write_all(&self.header.to_bytes()?)?;
+        file.write_all(&mut self.payload.to_bytes()?)?;
+
+        file.flush()?;
         Ok(())
     }
 
@@ -184,6 +220,32 @@ impl Audio for Wav {
     fn bit_depth(&self) -> u16 {
         self.header.bits_per_sample
     }
+
+    fn set_volume(&mut self, volume: f32) {
+        if volume < 0.0 {
+            panic!("Volume is less 0.0");
+        }
+
+        match &mut self.payload.samples {
+            SampleBits::I16bits(samples) => {
+                for sample in samples {
+                    let mut value = *sample as f32;
+                    value *= volume;
+
+                    *sample = (value.clamp(i16::MIN as f32, i16::MAX as f32)) as i16;
+                }
+            }
+
+            SampleBits::I32bits(samples) => {
+                for sample in samples {
+                    let mut value = *sample as f32;
+                    value *= volume;
+
+                    *sample = (value.clamp(i32::MIN as f32, i32::MAX as f32)) as i32;
+                }
+            }
+        }
+    }
 }
 
 // tests
@@ -194,15 +256,28 @@ mod tests {
     #[test]
     pub fn test_duplicate_file() {
         let mut audio = Wav::open("./audios/suzume_no_tojimari.wav").unwrap();
-        audio.save("./audios/duplicate.wav", true).unwrap();
+        audio.save("./audios/duplicate2.wav", true).unwrap();
 
         assert_eq!(audio.bit_depth(), 16);
         assert_eq!(audio.channels(), 2);
         assert_eq!(audio.sample_rate(), 44100);
 
-        let audio2 = Wav::open("./audios/duplicate.wav").unwrap();
+        let audio2 = Wav::open("./audios/duplicate2.wav").unwrap();
         assert_eq!(audio2.bit_depth(), 16);
         assert_eq!(audio2.channels(), 2);
         assert_eq!(audio2.sample_rate(), 44100);
+    }
+
+    #[test]
+    pub fn test_up_volume() {
+        let mut audio = Wav::open("./audios/duplicate.wav").unwrap();
+
+        println!("{}", audio.payload.to_bytes().unwrap().len());
+        audio.set_volume(0.5);
+
+        audio.save("./audios/duplicate.wav", true).unwrap();
+
+        let audio = Wav::open("./audios/duplicate.wav").unwrap();
+        println!("{}", audio.payload.to_bytes().unwrap().len());
     }
 }
