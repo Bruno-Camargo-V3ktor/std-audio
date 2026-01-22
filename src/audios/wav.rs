@@ -1,4 +1,5 @@
 use std::{
+    collections::VecDeque,
     fs::File,
     io::{self, Cursor, Read, Write},
 };
@@ -11,20 +12,21 @@ use super::Audio;
 
 #[derive(Clone, Debug)]
 pub struct Wav {
+    //Master RIFF chunk
+    //type_bloc_id: [u8; 4] -> RIFF,
+    //file_size: u32,
+    //format_id: [u8; 4] -> WAVE,
+    file_size: u32,
     header: FileHeader,
+    metada: Vec<u8>,
     payload: Payload,
 }
 
 #[derive(Clone, Debug)]
-/// 44 bytes in memory || RIFF WAVE ESPECIFICATION
+/// RIFF WAVE ESPECIFICATION
 struct FileHeader {
-    //Master RIFF chunk
-    type_bloc_id: [u8; 4],
-    file_size: u32,
-    format_id: [u8; 4],
-
     //Chunk describing the data format
-    format_bloc_id: [u8; 4],
+    //format_bloc_id: [u8; 4] -> fmt_,
     bloc_size: u32,
     audio_format: u16,
     nbr_channels: u16,
@@ -32,10 +34,6 @@ struct FileHeader {
     byte_per_sec: u32,
     byte_per_bloc: u16,
     bits_per_sample: u16,
-
-    //Chunk containing the sampled data
-    data_bloc_id: [u8; 4],
-    data_size: u32,
 }
 
 impl FileHeader {
@@ -43,28 +41,6 @@ impl FileHeader {
         let mut cursor = Cursor::new(bytes);
 
         Self {
-            //
-            type_bloc_id: [
-                cursor.read_u8().unwrap(),
-                cursor.read_u8().unwrap(),
-                cursor.read_u8().unwrap(),
-                cursor.read_u8().unwrap(),
-            ],
-            file_size: cursor.read_u32::<LittleEndian>().unwrap(),
-            format_id: [
-                cursor.read_u8().unwrap(),
-                cursor.read_u8().unwrap(),
-                cursor.read_u8().unwrap(),
-                cursor.read_u8().unwrap(),
-            ],
-
-            //
-            format_bloc_id: [
-                cursor.read_u8().unwrap(),
-                cursor.read_u8().unwrap(),
-                cursor.read_u8().unwrap(),
-                cursor.read_u8().unwrap(),
-            ],
             bloc_size: cursor.read_u32::<LittleEndian>().unwrap(),
             audio_format: cursor.read_u16::<LittleEndian>().unwrap(),
             nbr_channels: cursor.read_u16::<LittleEndian>().unwrap(),
@@ -72,27 +48,13 @@ impl FileHeader {
             byte_per_sec: cursor.read_u32::<LittleEndian>().unwrap(),
             byte_per_bloc: cursor.read_u16::<LittleEndian>().unwrap(),
             bits_per_sample: cursor.read_u16::<LittleEndian>().unwrap(),
-
-            //
-            data_bloc_id: [
-                cursor.read_u8().unwrap(),
-                cursor.read_u8().unwrap(),
-                cursor.read_u8().unwrap(),
-                cursor.read_u8().unwrap(),
-            ],
-            data_size: cursor.read_u32::<LittleEndian>().unwrap(),
         }
     }
 
     pub fn to_bytes(&self) -> io::Result<Vec<u8>> {
         let mut bytes = Vec::with_capacity(44);
 
-        bytes.write_all(&self.type_bloc_id)?;
-        bytes.write_u32::<LittleEndian>(self.file_size)?;
-        bytes.write_all(&self.format_id)?;
-
-        //
-        bytes.write_all(&self.format_bloc_id)?;
+        bytes.write_all(&[102, 109, 116, 32])?; // fmt␣
         bytes.write_u32::<LittleEndian>(self.bloc_size)?;
         bytes.write_u16::<LittleEndian>(self.audio_format)?;
         bytes.write_u16::<LittleEndian>(self.nbr_channels)?;
@@ -101,16 +63,14 @@ impl FileHeader {
         bytes.write_u16::<LittleEndian>(self.byte_per_bloc)?;
         bytes.write_u16::<LittleEndian>(self.bits_per_sample)?;
 
-        //
-        bytes.write_all(&self.data_bloc_id)?;
-        bytes.write_u32::<LittleEndian>(self.data_size)?;
-
         Ok(bytes)
     }
 }
 
 #[derive(Clone, Debug)]
 struct Payload {
+    //Chunk containing the sampled data
+    //data_bloc_id: [u8; 4] -> data,
     samples: SampleBits,
     total_bytes: usize,
 }
@@ -119,13 +79,13 @@ impl Payload {
     pub fn from_bytes(bits_per_sample: u16, bytes: &[u8]) -> Self {
         let samples = match bits_per_sample {
             16 => {
-                let mut samples = Vec::with_capacity(bytes.len());
+                let mut samples = VecDeque::with_capacity(bytes.len());
                 bytes.chunks(2).for_each(|v| {
                     let mut cursor = Cursor::new(v);
-                    samples.push(cursor.read_i16::<LittleEndian>().unwrap());
+                    samples.push_front(cursor.read_i16::<LittleEndian>().unwrap());
                 });
 
-                SampleBits::I16bits(samples)
+                SampleBits::I16bits(samples.into())
             }
 
             32 => {
@@ -148,6 +108,8 @@ impl Payload {
 
     pub fn to_bytes(&self) -> io::Result<Vec<u8>> {
         let mut bytes: Vec<u8> = Vec::with_capacity(self.total_bytes);
+        bytes.write_all(b"data")?;
+        bytes.write_u32::<LittleEndian>(self.total_bytes as u32)?;
 
         match &self.samples {
             SampleBits::I16bits(samples) => {
@@ -176,12 +138,17 @@ impl Audio for Wav {
         let mut file = File::open(path.into())?;
         let mut bytes = Vec::with_capacity(100);
 
-        let _size = file.read_to_end(&mut bytes)?;
+        let size = file.read_to_end(&mut bytes)?;
 
         let header = FileHeader::from_bytes(&bytes[0..44]);
         let payload = Payload::from_bytes(header.bits_per_sample, &bytes[44..]);
 
-        Ok(Self { header, payload })
+        Ok(Self {
+            file_size: (size as u32) - 8,
+            header,
+            metada: vec![],
+            payload,
+        })
     }
 
     fn save(&mut self, path: impl Into<String>, overwrite: bool) -> std::io::Result<()> {
@@ -191,19 +158,13 @@ impl Audio for Wav {
             File::create_new(path.into())?
         };
 
-        println!("{}", self.header.data_size);
-        println!("{}", self.header.file_size);
-
-        let payload_bytes = self.payload.to_bytes()?;
-        self.header.data_size = 26;
-        self.header.file_size = 36 + payload_bytes.len() as u32;
-
-        println!("{}", payload_bytes.len());
-        println!("{}", self.header.data_size);
-        println!("{}", self.header.file_size);
+        file.write(b"RIFF")?;
+        file.write_u32::<LittleEndian>(self.file_size)?;
+        file.write(b"WAVE")?;
 
         file.write_all(&self.header.to_bytes()?)?;
-        file.write_all(&mut self.payload.to_bytes()?)?;
+        file.write_all(&self.metada)?;
+        file.write_all(&self.payload.to_bytes()?)?;
 
         file.flush()?;
         Ok(())
