@@ -53,7 +53,7 @@ struct Payload {
     //Chunk containing the sampled data
     //data_bloc_id: [u8; 4] -> data,
     samples: SampleBits,
-    total_bytes: usize,
+    //total_bytes: u32,
 }
 
 // Impl Wav
@@ -202,11 +202,7 @@ impl Default for FileHeader {
 // Impl Payload
 impl Payload {
     pub fn new(samples: SampleBits) -> Self {
-        let size = samples.len();
-        Self {
-            total_bytes: size,
-            samples,
-        }
+        Self { samples }
     }
 
     pub fn from_bytes(bits_per_sample: u16, bytes: &[u8]) -> Self {
@@ -224,30 +220,15 @@ impl Payload {
 
         samples.write_raw(bytes);
 
-        Self {
-            samples,
-            total_bytes: bytes.len(),
-        }
+        Self { samples }
     }
 
     pub fn to_bytes(&self) -> io::Result<Vec<u8>> {
-        let mut bytes: Vec<u8> = Vec::with_capacity(self.total_bytes);
+        let mut bytes: Vec<u8> = Vec::with_capacity(self.samples.len());
         bytes.write_all(b"data")?;
-        bytes.write_u32::<LittleEndian>(self.total_bytes as u32)?;
+        bytes.write_u32::<LittleEndian>(self.samples.len() as u32)?;
 
-        match &self.samples {
-            SampleBits::I16bits(samples) => {
-                for sample in samples {
-                    bytes.write_i16::<LittleEndian>(*sample)?;
-                }
-            }
-
-            SampleBits::I32bits(samples) => {
-                for sample in samples {
-                    bytes.write_i32::<LittleEndian>(*sample)?;
-                }
-            }
-        }
+        bytes.write_all(&self.samples.to_bytes()?)?;
 
         Ok(bytes)
     }
@@ -321,5 +302,19 @@ mod tests {
         audio
             .save("./audios/suzume_no_tojimari_x05.wav", true)
             .unwrap();
+    }
+
+    #[test]
+    pub fn create_file() {
+        let mut audio = Wav::default();
+        let mut v = Vec::new();
+
+        for _ in 0..((44100 * 2 * 2) * 10) {
+            v.push(100);
+        }
+
+        audio.write_raw_samples(&v);
+
+        audio.save("./audios/new_file.wav", true).unwrap();
     }
 }

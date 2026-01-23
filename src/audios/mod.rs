@@ -1,7 +1,7 @@
 mod wav;
 pub use wav::*;
 
-use byteorder::{LittleEndian, ReadBytesExt};
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::io::{Cursor, Result as IOResult};
 
 #[derive(Clone, Debug)]
@@ -34,6 +34,26 @@ impl SampleBits {
                 });
             }
         }
+    }
+
+    pub fn to_bytes(&self) -> IOResult<Vec<u8>> {
+        let mut bytes = Vec::with_capacity(self.len());
+
+        match self {
+            SampleBits::I16bits(samples) => {
+                for sample in samples {
+                    bytes.write_i16::<LittleEndian>(*sample)?;
+                }
+            }
+
+            SampleBits::I32bits(samples) => {
+                for sample in samples {
+                    bytes.write_i32::<LittleEndian>(*sample)?;
+                }
+            }
+        }
+
+        Ok(bytes)
     }
 }
 
