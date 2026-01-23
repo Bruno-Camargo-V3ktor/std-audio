@@ -1,14 +1,10 @@
+use super::Audio;
+use crate::SampleBits;
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::{
-    collections::VecDeque,
     fs::File,
     io::{self, Cursor, Read, Write},
 };
-
-use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-
-use crate::SampleBits;
-
-use super::Audio;
 
 #[derive(Clone, Debug)]
 pub struct Wav {
@@ -18,7 +14,7 @@ pub struct Wav {
     //format_id: [u8; 4] -> WAVE,
     file_size: u32,
     header: FileHeader,
-    metada: Vec<u8>,
+    metadata: Metadata,
     payload: Payload,
 }
 
@@ -39,6 +35,7 @@ struct FileHeader {
 impl FileHeader {
     pub fn from_bytes(bytes: &[u8]) -> Self {
         let mut cursor = Cursor::new(bytes);
+        let _ = cursor.read_u32::<LittleEndian>();
 
         Self {
             bloc_size: cursor.read_u32::<LittleEndian>().unwrap(),
@@ -68,6 +65,37 @@ impl FileHeader {
 }
 
 #[derive(Clone, Debug)]
+struct Metadata {
+    pub data: Vec<u8>,
+}
+
+impl Metadata {
+    pub fn from_bytes(bytes: &[u8]) -> (Self, usize) {
+        let mut data = Vec::new();
+
+        let block = b"data";
+        let mut end = 0;
+
+        for i in 0..bytes.len() {
+            let v = &bytes[i..i + 4];
+
+            if v == block {
+                end = i + 4;
+                break;
+            }
+
+            data.push(bytes[i]);
+        }
+
+        (Self { data }, end)
+    }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        self.data.clone()
+    }
+}
+
+#[derive(Clone, Debug)]
 struct Payload {
     //Chunk containing the sampled data
     //data_bloc_id: [u8; 4] -> data,
@@ -77,19 +105,24 @@ struct Payload {
 
 impl Payload {
     pub fn from_bytes(bits_per_sample: u16, bytes: &[u8]) -> Self {
+        let mut cursor = Cursor::new(&bytes[0..4]);
+        let size = cursor.read_u32::<LittleEndian>().unwrap();
+
+        let bytes = &bytes[4..];
+
         let samples = match bits_per_sample {
             16 => {
-                let mut samples = VecDeque::with_capacity(bytes.len());
+                let mut samples = Vec::with_capacity(size as usize);
                 bytes.chunks(2).for_each(|v| {
                     let mut cursor = Cursor::new(v);
-                    samples.push_front(cursor.read_i16::<LittleEndian>().unwrap());
+                    samples.push(cursor.read_i16::<LittleEndian>().unwrap());
                 });
 
-                SampleBits::I16bits(samples.into())
+                SampleBits::I16bits(samples)
             }
 
             32 => {
-                let mut samples = Vec::with_capacity(bytes.len());
+                let mut samples = Vec::with_capacity(size as usize);
                 bytes.chunks(4).for_each(|v| {
                     let mut cursor = Cursor::new(v);
                     samples.push(cursor.read_i32::<LittleEndian>().unwrap());
@@ -138,15 +171,18 @@ impl Audio for Wav {
         let mut file = File::open(path.into())?;
         let mut bytes = Vec::with_capacity(100);
 
-        let size = file.read_to_end(&mut bytes)?;
+        let _size = file.read_to_end(&mut bytes)?;
 
-        let header = FileHeader::from_bytes(&bytes[0..44]);
-        let payload = Payload::from_bytes(header.bits_per_sample, &bytes[44..]);
+        let mut cursor = Cursor::new(&bytes[4..8]);
+
+        let header = FileHeader::from_bytes(&bytes[12..36]);
+        let (metadata, index) = Metadata::from_bytes(&bytes[36..]);
+        let payload = Payload::from_bytes(header.bits_per_sample, &bytes[36 + index..]);
 
         Ok(Self {
-            file_size: (size as u32) - 8,
+            file_size: cursor.read_u32::<LittleEndian>().unwrap() - 8,
             header,
-            metada: vec![],
+            metadata,
             payload,
         })
     }
@@ -163,7 +199,7 @@ impl Audio for Wav {
         file.write(b"WAVE")?;
 
         file.write_all(&self.header.to_bytes()?)?;
-        file.write_all(&self.metada)?;
+        file.write_all(&self.metadata.to_bytes())?;
         file.write_all(&self.payload.to_bytes()?)?;
 
         file.flush()?;
@@ -217,13 +253,13 @@ mod tests {
     #[test]
     pub fn test_duplicate_file() {
         let mut audio = Wav::open("./audios/suzume_no_tojimari.wav").unwrap();
-        audio.save("./audios/duplicate2.wav", true).unwrap();
+        audio.save("./audios/duplicate.wav", true).unwrap();
 
         assert_eq!(audio.bit_depth(), 16);
         assert_eq!(audio.channels(), 2);
         assert_eq!(audio.sample_rate(), 44100);
 
-        let audio2 = Wav::open("./audios/duplicate2.wav").unwrap();
+        let audio2 = Wav::open("./audios/duplicate.wav").unwrap();
         assert_eq!(audio2.bit_depth(), 16);
         assert_eq!(audio2.channels(), 2);
         assert_eq!(audio2.sample_rate(), 44100);
@@ -231,14 +267,12 @@ mod tests {
 
     #[test]
     pub fn test_up_volume() {
-        let mut audio = Wav::open("./audios/duplicate.wav").unwrap();
+        let mut audio = Wav::open("./audios/suzume_no_tojimari.wav").unwrap();
 
-        println!("{}", audio.payload.to_bytes().unwrap().len());
-        audio.set_volume(0.5);
+        audio.set_volume(0.05);
 
-        audio.save("./audios/duplicate.wav", true).unwrap();
-
-        let audio = Wav::open("./audios/duplicate.wav").unwrap();
-        println!("{}", audio.payload.to_bytes().unwrap().len());
+        audio
+            .save("./audios/suzume_no_tojimari_x05.wav", true)
+            .unwrap();
     }
 }
