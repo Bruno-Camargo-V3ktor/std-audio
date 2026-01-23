@@ -137,6 +137,12 @@ impl Audio for Wav {
             }
         }
     }
+
+    fn write_raw_samples(&mut self, raw: &[u8]) {
+        let size = raw.len();
+        self.payload.samples.write_raw(raw);
+        self.file_size += size as u32;
+    }
 }
 
 // Impl FileHeader
@@ -205,32 +211,18 @@ impl Payload {
 
     pub fn from_bytes(bits_per_sample: u16, bytes: &[u8]) -> Self {
         let mut cursor = Cursor::new(&bytes[0..4]);
-        let size = cursor.read_u32::<LittleEndian>().unwrap();
+        let _size = cursor.read_u32::<LittleEndian>().unwrap();
 
         let bytes = &bytes[4..];
 
-        let samples = match bits_per_sample {
-            16 => {
-                let mut samples = Vec::with_capacity(size as usize);
-                bytes.chunks(2).for_each(|v| {
-                    let mut cursor = Cursor::new(v);
-                    samples.push(cursor.read_i16::<LittleEndian>().unwrap());
-                });
+        let mut samples = match bits_per_sample {
+            16 => SampleBits::I16bits(vec![]),
 
-                SampleBits::I16bits(samples)
-            }
-
-            32 => {
-                let mut samples = Vec::with_capacity(size as usize);
-                bytes.chunks(4).for_each(|v| {
-                    let mut cursor = Cursor::new(v);
-                    samples.push(cursor.read_i32::<LittleEndian>().unwrap());
-                });
-
-                SampleBits::I32bits(samples)
-            }
+            32 => SampleBits::I32bits(vec![]),
             _ => panic!(),
         };
+
+        samples.write_raw(bytes);
 
         Self {
             samples,

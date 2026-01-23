@@ -1,8 +1,8 @@
 mod wav;
-
 pub use wav::*;
 
-use std::io::Result as IOResult;
+use byteorder::{LittleEndian, ReadBytesExt};
+use std::io::{Cursor, Result as IOResult};
 
 #[derive(Clone, Debug)]
 pub enum SampleBits {
@@ -15,6 +15,24 @@ impl SampleBits {
         match self {
             Self::I16bits(v) => v.len(),
             Self::I32bits(v) => v.len(),
+        }
+    }
+
+    pub fn write_raw(&mut self, raw: &[u8]) {
+        match self {
+            Self::I16bits(v) => {
+                raw.chunks(2).for_each(|bytes| {
+                    let mut cursor = Cursor::new(bytes);
+                    v.push(cursor.read_i16::<LittleEndian>().unwrap());
+                });
+            }
+
+            SampleBits::I32bits(v) => {
+                raw.chunks(4).for_each(|bytes| {
+                    let mut cursor = Cursor::new(bytes);
+                    v.push(cursor.read_i32::<LittleEndian>().unwrap());
+                });
+            }
         }
     }
 }
@@ -33,4 +51,6 @@ pub trait Audio {
     fn channels(&self) -> u16;
 
     fn set_volume(&mut self, volume: f32);
+
+    fn write_raw_samples(&mut self, raw: &[u8]);
 }
