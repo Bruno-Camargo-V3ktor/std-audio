@@ -10,6 +10,15 @@ pub enum SampleBits {
     I32bits(Vec<i32>),
 }
 
+impl SampleBits {
+    pub fn len(&self) -> usize {
+        match self {
+            Self::I16bits(v) => v.len(),
+            Self::I32bits(v) => v.len(),
+        }
+    }
+}
+
 pub trait Audio {
     fn open(path: impl Into<String>) -> IOResult<Self>
     where
